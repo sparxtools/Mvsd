@@ -13,29 +13,16 @@ local SCRIPT_RAW_URL = "https://raw.githubusercontent.com/sparxtools/Mvsd/refs/h
 
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 
-local function SaveTeleportState(state)
-    if queue_on_teleport then
-        if state then
-            queue_on_teleport(string.format([[
-                getgenv().autoFarm = true
-                getgenv().autoShoot = true
-                repeat task.wait() until game:IsLoaded()
-                task.wait(1)
-                loadstring(game:HttpGet("%s"))()
-            ]], SCRIPT_RAW_URL))
-        else
-            queue_on_teleport("")
-        end
+local function ArmTeleportQueue()
+    if queue_on_teleport and getgenv().autoFarm then
+        queue_on_teleport(string.format([[
+            getgenv().autoFarm = true
+            getgenv().autoShoot = true
+            repeat task.wait() until game:IsLoaded()
+            task.wait(1.5)
+            loadstring(game:HttpGet("%s"))()
+        ]], SCRIPT_RAW_URL))
     end
-end
-
-if queue_on_teleport then
-    TeleportService.TeleportInitFailed:Connect(function()
-        if getgenv().autoFarm then
-            task.wait(2)
-            SaveTeleportState(true)
-        end
-    end)
 end
 
 getgenv().autoFarm = getgenv().autoFarm or false
@@ -53,7 +40,7 @@ local FIRE_RATE_COOLDOWN = 0.11
 local EQUIP_COOLDOWN = 0.5 
 local QUEUE_COOLDOWN = 4.0 
 
--- Robust Target Finder (Re-evaluates every frame to never lose targets)
+-- Robust Target Finder
 local function getNearestTarget()
     local LocalPlayer = Players.LocalPlayer
     if not LocalPlayer then return nil, nil end
@@ -97,15 +84,13 @@ local function JoinMatchmaking()
         local joinQueue = remotes and remotes:FindFirstChild("JoinQueue")
         
         if joinQueue then
-            if getgenv().autoFarm then
-                SaveTeleportState(true)
-            end
+            ArmTeleportQueue()
             joinQueue:InvokeServer("Solo")
         end
     end)
 end
 
--- Permanent Robust Combat Loop (Handles tool re-equipping on death/respawn)
+-- Permanent Robust Combat Loop with Live Dynamic Remotes & Muzzle Fetching
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
@@ -113,16 +98,15 @@ local function StartCombatLoop()
         local LocalPlayer = Players.LocalPlayer
         if not LocalPlayer then return end
 
-        -- Handle Matchmaking Queue when in lobby/idle
         if getgenv().autoFarm then
             local currentTime = os.clock()
             if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
                 lastQueueTime = currentTime
+                ArmTeleportQueue()
                 task.spawn(JoinMatchmaking)
             end
         end
         
-        -- Continuous Auto Kill & Dynamic Tool Re-Equip
         if getgenv().autoShoot or getgenv().autoFarm then
             local myChar = LocalPlayer.Character
             if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
@@ -130,7 +114,7 @@ local function StartCombatLoop()
             local humanoid = myChar:FindFirstChildOfClass("Humanoid")
             if not humanoid or humanoid.Health <= 0 then return end
 
-            -- Auto-Equip if weapon is missing or dropped after death/respawn
+            -- Auto-Equip Check
             if not myChar:FindFirstChildOfClass("Tool") and not myChar:FindFirstChild("Gun_Equip") then
                 local currentTime = os.clock()
                 if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
@@ -146,6 +130,7 @@ local function StartCombatLoop()
             local currentTime = os.clock()
             if (currentTime - lastFireTime) < FIRE_RATE_COOLDOWN then return end
             
+            -- LIVE FETCHING: Always look up Remotes and Muzzle fresh every frame so it never breaks across rounds
             local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
             local ShootRemote = remotesFolder and remotesFolder:FindFirstChild("ShootGun")
             if not ShootRemote then return end
@@ -229,7 +214,7 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "AUTO FARM INFINITE"
+Subtitle.Text = "INFINITE AUTO FARM"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
@@ -326,7 +311,7 @@ local function SetToggleState(enabled)
     
     if enabled then
         StartCombatLoop()
-        SaveTeleportState(true)
+        ArmTeleportQueue()
         
         ToggleButton.BackgroundColor3 = Color3.fromRGB(15, 35, 70)
         BtnStroke.Color = Color3.fromRGB(0, 200, 255)
@@ -337,7 +322,7 @@ local function SetToggleState(enabled)
         ToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     else
         if autoShootConnection then autoShootConnection:Disconnect() end
-        SaveTeleportState(false)
+        if queue_on_teleport then queue_on_teleport("") end
         
         ToggleButton.BackgroundColor3 = Color3.fromRGB(15, 18, 35)
         BtnStroke.Color = Color3.fromRGB(50, 80, 140)
