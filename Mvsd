@@ -1,4 +1,4 @@
--- [[ Sparx - Ultimate 2-Player Match State Auto Farm ]]
+-- [[ Sparx - Ultimate Instant-Fire Auto Farm & Burst Kill ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -40,14 +40,13 @@ local matchStartTime = 0
 local wasInMatch = false
 
 local FIRE_RATE_COOLDOWN = 0.05
-local EQUIP_COOLDOWN = 0.4 
+local EQUIP_COOLDOWN = 0.3 
 local QUEUE_COOLDOWN = 6.0 
-local MATCH_LOAD_DELAY = 5.0 
+local MATCH_LOAD_DELAY = 4.0 
 
--- Exact 1v1 Match Detector: 1v1 servers strictly contain exactly 2 players total.
+-- Exact 1v1 Match Detector: 2 players means we are in the solo match server.
 local function IsInMatch()
     local allPlayers = Players:GetPlayers()
-    -- Exactly 2 players means we are in the solo 1v1 match server
     if #allPlayers == 2 then
         return true
     end
@@ -99,25 +98,13 @@ local function JoinMatchmaking()
         
         if joinQueue then
             ArmTeleportQueue()
-            print("[Sparx AutoFarm]: In Lobby (Crowded Server) -> Requesting Solo Match Queue...")
+            print("[Sparx AutoFarm]: In Lobby -> Requesting Solo Match Queue...")
             joinQueue:InvokeServer("Solo")
         end
     end)
 end
 
-local function ForceEquipWeapon(myChar)
-    if not myChar then return end
-    pcall(function()
-        if not myChar:FindFirstChildOfClass("Tool") and not myChar:FindFirstChild("Gun_Equip") then
-            print("[Sparx Combat]: Forcing weapon equip...")
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
-        end
-    end)
-end
-
--- Ultimate Combat Loop with 2-Player Server Check & 5x Burst Fire
+-- Ultimate Combat Loop: Equips weapon and instantly fires in sequence
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
@@ -130,12 +117,12 @@ local function StartCombatLoop()
             
             if inMatchNow and not wasInMatch then
                 matchStartTime = os.clock()
-                print("[Sparx System]: Entered 1v1 match server (2 players detected)! Buffering 5 seconds...")
+                print("[Sparx System]: Entered 1v1 match server! Buffering loading delay...")
             end
             wasInMatch = inMatchNow
 
             if not inMatchNow then
-                -- LOBBY STATE (Crowded server): Only run matchmaking queue
+                -- LOBBY STATE: Queue for match
                 local currentTime = os.clock()
                 if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
                     lastQueueTime = currentTime
@@ -143,7 +130,7 @@ local function StartCombatLoop()
                     task.spawn(JoinMatchmaking)
                 end
             else
-                -- MATCH STATE (Exact 1v1 server): Wait out load delay, then auto-kill
+                -- MATCH STATE: Check loading buffer
                 if (os.clock() - matchStartTime) < MATCH_LOAD_DELAY then
                     return 
                 end
@@ -155,13 +142,24 @@ local function StartCombatLoop()
                 if not humanoid or humanoid.Health <= 0 then return end
 
                 local currentTime = os.clock()
-                if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
-                    lastEquipTime = currentTime
-                    ForceEquipWeapon(myChar)
+                
+                -- STEP 1: Ensure Weapon is Equipped
+                local hasTool = myChar:FindFirstChildOfClass("Tool") or myChar:FindFirstChild("Gun_Equip")
+                if not hasTool then
+                    if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
+                        lastEquipTime = currentTime
+                        pcall(function()
+                            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
+                            task.wait(0.02)
+                            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
+                        end)
+                    end
+                    return -- Wait 1 tick for tool to spawn into hands
                 end
                 
                 if (currentTime - lastFireTime) < FIRE_RATE_COOLDOWN then return end
                 
+                -- STEP 2: Instantly fetch remotes and fire right after equipment check passes
                 local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
                 local ShootRemote = remotesFolder and remotesFolder:FindFirstChild("ShootGun")
                 if not ShootRemote then return end
@@ -174,16 +172,16 @@ local function StartCombatLoop()
                 if targetInstance and predictedPosition then
                     lastFireTime = currentTime 
                     
-                    -- BURST FIRE: Send 5 packets instantly
+                    -- INSTANT BURST FIRE: Send 5 packets immediately
                     task.spawn(function()
                         for i = 1, 5 do
                             pcall(function()
                                 ShootRemote:FireServer(muzzle.WorldPosition, predictedPosition, targetInstance, predictedPosition)
                             end)
-                            task.wait(0.02)
+                            task.wait(0.01)
                         end
                     end)
-                    print("[Sparx KillLog]: Fired 5x burst packet at 1v1 opponent!")
+                    print("[Sparx KillLog]: Weapon equipped & 5x instant burst fired at target!")
                 end
             end
         end
@@ -192,9 +190,6 @@ end
 
 Players.LocalPlayer.CharacterAdded:Connect(function(newChar)
     task.wait(1) 
-    if getgenv().autoFarm then
-        ForceEquipWeapon(newChar)
-    end
 end)
 
 -- UI Cleanup & Construction
@@ -260,7 +255,7 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "1V1 SERVER DETECTOR"
+Subtitle.Text = "INSTANT-FIRE AUTO FARM"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
@@ -356,7 +351,7 @@ local function SetToggleState(enabled)
     getgenv().autoShoot = enabled
     
     if enabled then
-        print("[Sparx System]: 1v1 Server Detector Auto Farm Enabled.")
+        print("[Sparx System]: Instant-Fire Auto Farm Enabled.")
         StartCombatLoop()
         ArmTeleportQueue()
         
