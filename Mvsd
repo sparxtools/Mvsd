@@ -1,0 +1,361 @@
+-- [[ Sparx - Auto Farm & Full Teleport Persistence ]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local TeleportService = game:GetService("TeleportService")
+
+-- ⚠️ PASTE YOUR RAW GITHUB OR PASTEBIN URL HERE ⚠️
+local SCRIPT_RAW_URL = "YOUR_RAW_GITHUB_LINK_HERE" 
+
+-- Teleport Persistence Handler
+local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+
+local function SaveTeleportState(state)
+    if queue_on_teleport then
+        if state then
+            queue_on_teleport(string.format([[
+                getgenv().autoFarm = true
+                getgenv().autoShoot = true
+                repeat task.wait() until game:IsLoaded()
+                task.wait(1)
+                loadstring(game:HttpGet("%s"))()
+            ]], SCRIPT_RAW_URL))
+        else
+            queue_on_teleport("")
+        end
+    end
+end
+
+-- Configuration
+getgenv().autoFarm = getgenv().autoFarm or false
+getgenv().autoShoot = getgenv().autoShoot or false
+getgenv().aimConfig = { 
+    MAX_DISTANCE = 500,
+    PREDRATE = 0.135
+}
+
+local autoShootConnection = nil
+local lastFireTime = 0
+local lastEquipTime = 0
+local lastQueueTime = 0
+local FIRE_RATE_COOLDOWN = 0.11
+local EQUIP_COOLDOWN = 0.5 
+local QUEUE_COOLDOWN = 4.0 
+
+-- Target Logic
+local function getNearestTarget()
+    local LocalPlayer = Players.LocalPlayer
+    if not LocalPlayer then return nil, nil end
+    local myChar = LocalPlayer.Character 
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart") 
+    if not myRoot then return nil, nil end
+    
+    local nearestPlayer, minDist = nil, math.huge
+    local targetVelocity = Vector3.new(0, 0, 0)
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local hum = player.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead and player.Character.Parent == Workspace then
+                if not player.Team or not LocalPlayer.Team or player.Team ~= LocalPlayer.Team then
+                    local enemyRoot = player.Character.HumanoidRootPart 
+                    local dist = (enemyRoot.Position - myRoot.Position).Magnitude
+                    
+                    local velocity = enemyRoot.AssemblyLinearVelocity
+                    if dist < minDist and dist <= getgenv().aimConfig.MAX_DISTANCE and velocity.Y > -100 then 
+                        minDist = dist
+                        nearestPlayer = enemyRoot
+                        targetVelocity = velocity
+                    end
+                end
+            end
+        end
+    end 
+    
+    if nearestPlayer then
+        local predictedPos = nearestPlayer.Position + (targetVelocity * getgenv().aimConfig.PREDRATE)
+        return nearestPlayer, predictedPos
+    end
+    return nil, nil
+end
+
+-- Re-Queue Function
+local function JoinMatchmaking()
+    pcall(function()
+        local globalMatchmaking = ReplicatedStorage:FindFirstChild("GlobalMatchmaking")
+        local remotes = globalMatchmaking and globalMatchmaking:FindFirstChild("Remotes")
+        local joinQueue = remotes and remotes:FindFirstChild("JoinQueue")
+        
+        if joinQueue then
+            joinQueue:InvokeServer("Solo")
+        end
+    end)
+end
+
+-- Core Loop Handler
+local function StartCombatLoop()
+    if autoShootConnection then autoShootConnection:Disconnect() end
+    
+    autoShootConnection = RunService.Heartbeat:Connect(function()
+        local LocalPlayer = Players.LocalPlayer
+        if not LocalPlayer or not LocalPlayer.Character then return end
+
+        -- Auto Queue in Lobby
+        if getgenv().autoFarm then
+            local currentTime = os.clock()
+            if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
+                lastQueueTime = currentTime
+                task.spawn(JoinMatchmaking)
+            end
+        end
+        
+        -- Auto Equip & Auto Kill in Game
+        if getgenv().autoShoot or getgenv().autoFarm then
+            if not LocalPlayer.Character:FindFirstChildOfClass("Tool") then
+                local currentTime = os.clock()
+                if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
+                    lastEquipTime = currentTime
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
+                        task.wait(0.05)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
+                    end)
+                end
+            end
+            
+            local currentTime = os.clock()
+            if (currentTime - lastFireTime) < FIRE_RATE_COOLDOWN then return end
+            
+            local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+            local ShootRemote = remotesFolder and remotesFolder:FindFirstChild("ShootGun")
+            if not ShootRemote then return end
+            
+            local gunModel = LocalPlayer.Character:FindFirstChild("Gun_Equip") or LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            local muzzle = gunModel and gunModel:FindFirstChild("Muzzle", true)
+            if not muzzle then return end
+            
+            local targetInstance, predictedPosition = getNearestTarget()
+            if targetInstance and predictedPosition then
+                lastFireTime = currentTime 
+                pcall(function()
+                    ShootRemote:FireServer(muzzle.WorldPosition, predictedPosition, targetInstance, predictedPosition)
+                end)
+            end
+        end
+    end)
+end
+
+-- UI Cleanup
+if CoreGui:FindFirstChild("SparxAutoFarmUI") then
+    CoreGui.SparxAutoFarmUI:Destroy()
+end
+
+-- UI Construction
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SparxAutoFarmUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(12, 10, 24)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.05, 0, 0.1, 0)
+MainFrame.Size = UDim2.new(0, 220, 0, 135)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 12)
+UICorner.Parent = MainFrame
+
+local UIGradient = Instance.new("UIGradient")
+UIGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 12, 35)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 15, 30))
+})
+UIGradient.Rotation = 45
+UIGradient.Parent = MainFrame
+
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(0, 180, 255)
+UIStroke.Transparency = 0.2
+UIStroke.Thickness = 2
+UIStroke.Parent = MainFrame
+
+local GlowBar = Instance.new("Frame")
+GlowBar.Parent = MainFrame
+GlowBar.BackgroundColor3 = Color3.fromRGB(180, 60, 255)
+GlowBar.BorderSizePixel = 0
+GlowBar.Size = UDim2.new(1, 0, 0, 3)
+local GlowCorner = Instance.new("UICorner")
+GlowCorner.CornerRadius = UDim.new(0, 2)
+GlowCorner.Parent = GlowBar
+
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.BackgroundTransparency = 1
+Title.Position = UDim2.new(0, 0, 0, 8)
+Title.Size = UDim2.new(1, 0, 0, 25)
+Title.Font = Enum.Font.GothamBold
+Title.Text = "♾️ SPARX"
+Title.TextColor3 = Color3.fromRGB(230, 245, 255)
+Title.TextSize = 15
+
+local Subtitle = Instance.new("TextLabel")
+Subtitle.Parent = MainFrame
+Subtitle.BackgroundTransparency = 1
+Subtitle.Position = UDim2.new(0, 0, 0, 26)
+Subtitle.Size = UDim2.new(1, 0, 0, 15)
+Subtitle.Font = Enum.Font.Gotham
+Subtitle.Text = "AUTO FARM PERSISTENT"
+Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
+Subtitle.TextSize = 8
+
+-- Sparkles
+local function createSparkles(x, y)
+    for i = 1, 6 do
+        task.spawn(function()
+            local Sparkle = Instance.new("Frame")
+            Sparkle.Parent = ScreenGui
+            Sparkle.BackgroundColor3 = math.random(1, 2) == 1 and Color3.fromRGB(0, 220, 255) or Color3.fromRGB(220, 100, 255)
+            Sparkle.BorderSizePixel = 0
+            Sparkle.Size = UDim2.new(0, math.random(4, 9), 0, math.random(4, 9))
+            Sparkle.Position = UDim2.new(0, x + math.random(-30, 30), 0, y + math.random(-30, 30))
+            
+            local sparkCorner = Instance.new("UICorner")
+            sparkCorner.CornerRadius = UDim.new(1, 0)
+            sparkCorner.Parent = Sparkle
+            
+            local randomAngle = math.rad(math.random(0, 360))
+            local distance = math.random(25, 60)
+            local targetX = Sparkle.AbsolutePosition.X + math.cos(randomAngle) * distance
+            local targetY = Sparkle.AbsolutePosition.Y + math.sin(randomAngle) * distance
+            
+            local twInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            TweenService:Create(Sparkle, twInfo, {
+                Position = UDim2.new(0, targetX, 0, targetY),
+                BackgroundTransparency = 1,
+                Size = UDim2.new(0, 1, 0, 1)
+            }):Play()
+            
+            task.wait(0.4)
+            Sparkle:Destroy()
+        end)
+    end
+end
+
+-- Toggle Button
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Parent = MainFrame
+ToggleButton.BackgroundColor3 = Color3.fromRGB(15, 18, 35)
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Position = UDim2.new(0.07, 0, 0, 58)
+ToggleButton.Size = UDim2.new(0.86, 0, 0, 44)
+ToggleButton.Font = Enum.Font.GothamMedium
+ToggleButton.Text = ""
+ToggleButton.AutoButtonColor = false
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 8)
+BtnCorner.Parent = ToggleButton
+
+local BtnStroke = Instance.new("UIStroke")
+BtnStroke.Color = Color3.fromRGB(50, 80, 140)
+BtnStroke.Thickness = 1.2
+BtnStroke.Parent = ToggleButton
+
+local ToggleLabel = Instance.new("TextLabel")
+ToggleLabel.Parent = ToggleButton
+ToggleLabel.BackgroundTransparency = 1
+ToggleLabel.Position = UDim2.new(0.1, 0, 0, 0)
+ToggleLabel.Size = UDim2.new(0.6, 0, 1, 0)
+ToggleLabel.Font = Enum.Font.GothamMedium
+ToggleLabel.Text = "Auto Farm"
+ToggleLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+ToggleLabel.TextSize = 13
+ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Status Indicator
+local StatusIndicator = Instance.new("Frame")
+StatusIndicator.Name = "StatusIndicator"
+StatusIndicator.Parent = ToggleButton
+StatusIndicator.BackgroundColor3 = Color3.fromRGB(45, 50, 70)
+StatusIndicator.BorderSizePixel = 0
+StatusIndicator.AnchorPoint = Vector2.new(1, 0.5)
+StatusIndicator.Position = UDim2.new(0.94, 0, 0.5, 0)
+StatusIndicator.Size = UDim2.new(0, 40, 0, 20)
+
+local StatusCorner = Instance.new("UICorner")
+StatusCorner.CornerRadius = UDim.new(1, 0)
+StatusCorner.Parent = StatusIndicator
+
+local Dot = Instance.new("Frame")
+Dot.Name = "IndicatorDot"
+Dot.Parent = StatusIndicator
+Dot.BackgroundColor3 = Color3.fromRGB(150, 150, 180)
+Dot.BorderSizePixel = 0
+Dot.AnchorPoint = Vector2.new(0, 0.5)
+Dot.Position = UDim2.new(0, 2, 0.5, 0)
+Dot.Size = UDim2.new(0, 16, 0, 16)
+local DotCorner = Instance.new("UICorner")
+DotCorner.CornerRadius = UDim.new(1, 0)
+DotCorner.Parent = Dot
+
+-- State Updater
+local function SetToggleState(enabled)
+    getgenv().autoFarm = enabled
+    getgenv().autoShoot = enabled
+    
+    if enabled then
+        StartCombatLoop()
+        SaveTeleportState(true)
+        
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(15, 35, 70)
+        BtnStroke.Color = Color3.fromRGB(0, 200, 255)
+        
+        StatusIndicator.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+        Dot.Position = UDim2.new(1, -18, 0.5, 0)
+        Dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        ToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    else
+        if autoShootConnection then autoShootConnection:Disconnect() end
+        SaveTeleportState(false)
+        
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(15, 18, 35)
+        BtnStroke.Color = Color3.fromRGB(50, 80, 140)
+        
+        StatusIndicator.BackgroundColor3 = Color3.fromRGB(45, 50, 70)
+        Dot.Position = UDim2.new(0, 2, 0.5, 0)
+        Dot.BackgroundColor3 = Color3.fromRGB(150, 150, 180)
+        ToggleLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
+    end
+end
+
+-- Toggle Handler
+ToggleButton.MouseButton1Click:Connect(function()
+    local newState = not getgenv().autoFarm
+    pcall(function()
+        local mouse = Players.LocalPlayer:GetMouse()
+        createSparkles(mouse.X, mouse.Y)
+    end)
+    SetToggleState(newState)
+end)
+
+-- Keybind to Hide/Show UI (Right Shift)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
+        MainFrame.Visible = not MainFrame.Visible
+    end
+end)
+
+-- AUTO-DETECT STATE AFTER TELEPORT
+if getgenv().autoFarm then
+    SetToggleState(true)
+end
