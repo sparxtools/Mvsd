@@ -1,4 +1,4 @@
--- [[ Sparx - Permanent Infinite Auto-Kill & Auto-Farm Loop ]]
+-- [[ Sparx - Ultimate Bulletproof Auto-Kill & Console Debugger ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,7 +19,7 @@ local function ArmTeleportQueue()
             getgenv().autoFarm = true
             getgenv().autoShoot = true
             repeat task.wait() until game:IsLoaded()
-            task.wait(1.5)
+            task.wait(2)
             loadstring(game:HttpGet("%s"))()
         ]], SCRIPT_RAW_URL))
     end
@@ -37,10 +37,10 @@ local lastFireTime = 0
 local lastEquipTime = 0
 local lastQueueTime = 0
 local FIRE_RATE_COOLDOWN = 0.11
-local EQUIP_COOLDOWN = 0.5 
-local QUEUE_COOLDOWN = 4.0 
+local EQUIP_COOLDOWN = 0.4 
+local QUEUE_COOLDOWN = 5.0 
 
--- Robust Target Finder
+-- Robust Target Finder with Console Feedback
 local function getNearestTarget()
     local LocalPlayer = Players.LocalPlayer
     if not LocalPlayer then return nil, nil end
@@ -85,12 +85,28 @@ local function JoinMatchmaking()
         
         if joinQueue then
             ArmTeleportQueue()
+            print("[Sparx AutoFarm]: Invoking Solo Matchmaking Queue...")
             joinQueue:InvokeServer("Solo")
+        else
+            warn("[Sparx AutoFarm Error]: JoinQueue remote not found!")
         end
     end)
 end
 
--- Permanent Robust Combat Loop with Live Dynamic Remotes & Muzzle Fetching
+-- Auto-Equip Handler Function
+local function ForceEquipWeapon(myChar)
+    if not myChar then return end
+    pcall(function()
+        if not myChar:FindFirstChildOfClass("Tool") and not myChar:FindFirstChild("Gun_Equip") then
+            print("[Sparx Combat]: Equipping weapon tool via key 2...")
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
+        end
+    end)
+end
+
+-- Unbreakable Combat & Matchmaking Loop with Live Console Logging
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
@@ -98,6 +114,7 @@ local function StartCombatLoop()
         local LocalPlayer = Players.LocalPlayer
         if not LocalPlayer then return end
 
+        -- Matchmaking queue logic
         if getgenv().autoFarm then
             local currentTime = os.clock()
             if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
@@ -107,6 +124,7 @@ local function StartCombatLoop()
             end
         end
         
+        -- Auto-Shoot & Combat Execution with Error Tracing
         if getgenv().autoShoot or getgenv().autoFarm then
             local myChar = LocalPlayer.Character
             if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
@@ -114,41 +132,56 @@ local function StartCombatLoop()
             local humanoid = myChar:FindFirstChildOfClass("Humanoid")
             if not humanoid or humanoid.Health <= 0 then return end
 
-            -- Auto-Equip Check
-            if not myChar:FindFirstChildOfClass("Tool") and not myChar:FindFirstChild("Gun_Equip") then
-                local currentTime = os.clock()
-                if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
-                    lastEquipTime = currentTime
-                    pcall(function()
-                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
-                        task.wait(0.05)
-                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
-                    end)
-                end
+            local currentTime = os.clock()
+            if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
+                lastEquipTime = currentTime
+                ForceEquipWeapon(myChar)
             end
             
-            local currentTime = os.clock()
             if (currentTime - lastFireTime) < FIRE_RATE_COOLDOWN then return end
             
-            -- LIVE FETCHING: Always look up Remotes and Muzzle fresh every frame so it never breaks across rounds
             local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
             local ShootRemote = remotesFolder and remotesFolder:FindFirstChild("ShootGun")
-            if not ShootRemote then return end
+            if not ShootRemote then
+                warn("[Sparx Combat Error]: 'ShootGun' remote missing from ReplicatedStorage.Remotes!")
+                return 
+            end
             
             local gunModel = myChar:FindFirstChild("Gun_Equip") or myChar:FindFirstChildOfClass("Tool")
             local muzzle = gunModel and gunModel:FindFirstChild("Muzzle", true)
-            if not muzzle then return end
+            if not muzzle then
+                -- Debug info to console if gun/muzzle drops
+                -- print("[Sparx Combat Debug]: Tool or Muzzle not currently detected in character.")
+                return 
+            end
             
             local targetInstance, predictedPosition = getNearestTarget()
             if targetInstance and predictedPosition then
                 lastFireTime = currentTime 
-                pcall(function()
+                
+                -- Attempt firing and log success or caught errors to console
+                local success, err = pcall(function()
                     ShootRemote:FireServer(muzzle.WorldPosition, predictedPosition, targetInstance, predictedPosition)
                 end)
+                
+                if success then
+                    print(string.format("[Sparx KillLog]: Fired at target root at position: %s | Predicted: %s", tostring(targetInstance.Position), tostring(predictedPosition)))
+                else
+                    warn(string.format("[Sparx Combat Error]: Failed to fire remote! Reason: %s", tostring(err)))
+                end
             end
         end
     end)
 end
+
+-- Hook character spawns
+Players.LocalPlayer.CharacterAdded:Connect(function(newChar)
+    print("[Sparx System]: Character spawned / respawned. Re-initializing checks...")
+    task.wait(1) 
+    if getgenv().autoFarm or getgenv().autoShoot then
+        ForceEquipWeapon(newChar)
+    end
+end)
 
 -- UI Cleanup
 if CoreGui:FindFirstChild("SparxAutoFarmUI") then
@@ -214,7 +247,7 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "INFINITE AUTO FARM"
+Subtitle.Text = "CONSOLE DEBUGGER EDITION"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
@@ -310,6 +343,7 @@ local function SetToggleState(enabled)
     getgenv().autoShoot = enabled
     
     if enabled then
+        print("[Sparx System]: Auto Farm & Auto Kill Enabled!")
         StartCombatLoop()
         ArmTeleportQueue()
         
@@ -321,6 +355,7 @@ local function SetToggleState(enabled)
         Dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
         ToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     else
+        print("[Sparx System]: Auto Farm & Auto Kill Disabled.")
         if autoShootConnection then autoShootConnection:Disconnect() end
         if queue_on_teleport then queue_on_teleport("") end
         
