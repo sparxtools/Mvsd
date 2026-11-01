@@ -1,4 +1,4 @@
--- [[ Sparx - Auto Farm & Full Teleport Persistence ]]
+-- [[ Sparx - Auto Farm & Infinite Teleport Persistence Loop ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,12 +9,11 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
 
--- ⚠️ PASTE YOUR RAW GITHUB OR PASTEBIN URL HERE ⚠️
-local SCRIPT_RAW_URL = "YOUR_RAW_GITHUB_LINK_HERE" 
+local SCRIPT_RAW_URL = "https://raw.githubusercontent.com/sparxtools/Mvsd/refs/heads/main/Mvsd" 
 
--- Teleport Persistence Handler
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 
+-- Function to continuously re-arm the teleport queue so it never dies
 local function SaveTeleportState(state)
     if queue_on_teleport then
         if state then
@@ -31,7 +30,16 @@ local function SaveTeleportState(state)
     end
 end
 
--- Configuration
+-- Re-arm queue whenever a teleport begins so it chains infinitely
+if queue_on_teleport then
+    TeleportService.TeleportInitFailed:Connect(function()
+        if getgenv().autoFarm then
+            task.wait(2)
+            SaveTeleportState(true)
+        end
+    end)
+end
+
 getgenv().autoFarm = getgenv().autoFarm or false
 getgenv().autoShoot = getgenv().autoShoot or false
 getgenv().aimConfig = { 
@@ -47,7 +55,6 @@ local FIRE_RATE_COOLDOWN = 0.11
 local EQUIP_COOLDOWN = 0.5 
 local QUEUE_COOLDOWN = 4.0 
 
--- Target Logic
 local function getNearestTarget()
     local LocalPlayer = Players.LocalPlayer
     if not LocalPlayer then return nil, nil end
@@ -84,7 +91,6 @@ local function getNearestTarget()
     return nil, nil
 end
 
--- Re-Queue Function
 local function JoinMatchmaking()
     pcall(function()
         local globalMatchmaking = ReplicatedStorage:FindFirstChild("GlobalMatchmaking")
@@ -92,12 +98,15 @@ local function JoinMatchmaking()
         local joinQueue = remotes and remotes:FindFirstChild("JoinQueue")
         
         if joinQueue then
+            -- Re-arm queue state right before invoking match join
+            if getgenv().autoFarm then
+                SaveTeleportState(true)
+            end
             joinQueue:InvokeServer("Solo")
         end
     end)
 end
 
--- Core Loop Handler
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
@@ -105,7 +114,6 @@ local function StartCombatLoop()
         local LocalPlayer = Players.LocalPlayer
         if not LocalPlayer or not LocalPlayer.Character then return end
 
-        -- Auto Queue in Lobby
         if getgenv().autoFarm then
             local currentTime = os.clock()
             if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
@@ -114,7 +122,6 @@ local function StartCombatLoop()
             end
         end
         
-        -- Auto Equip & Auto Kill in Game
         if getgenv().autoShoot or getgenv().autoFarm then
             if not LocalPlayer.Character:FindFirstChildOfClass("Tool") then
                 local currentTime = os.clock()
@@ -150,12 +157,10 @@ local function StartCombatLoop()
     end)
 end
 
--- UI Cleanup
 if CoreGui:FindFirstChild("SparxAutoFarmUI") then
     CoreGui.SparxAutoFarmUI:Destroy()
 end
 
--- UI Construction
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SparxAutoFarmUI"
 ScreenGui.Parent = CoreGui
@@ -214,11 +219,10 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "AUTO FARM PERSISTENT"
+Subtitle.Text = "AUTO FARM LOOP"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
--- Sparkles
 local function createSparkles(x, y)
     for i = 1, 6 do
         task.spawn(function()
@@ -251,7 +255,6 @@ local function createSparkles(x, y)
     end
 end
 
--- Toggle Button
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Parent = MainFrame
 ToggleButton.BackgroundColor3 = Color3.fromRGB(15, 18, 35)
@@ -282,7 +285,6 @@ ToggleLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
 ToggleLabel.TextSize = 13
 ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Status Indicator
 local StatusIndicator = Instance.new("Frame")
 StatusIndicator.Name = "StatusIndicator"
 StatusIndicator.Parent = ToggleButton
@@ -308,7 +310,6 @@ local DotCorner = Instance.new("UICorner")
 DotCorner.CornerRadius = UDim.new(1, 0)
 DotCorner.Parent = Dot
 
--- State Updater
 local function SetToggleState(enabled)
     getgenv().autoFarm = enabled
     getgenv().autoShoot = enabled
@@ -338,7 +339,6 @@ local function SetToggleState(enabled)
     end
 end
 
--- Toggle Handler
 ToggleButton.MouseButton1Click:Connect(function()
     local newState = not getgenv().autoFarm
     pcall(function()
@@ -348,14 +348,12 @@ ToggleButton.MouseButton1Click:Connect(function()
     SetToggleState(newState)
 end)
 
--- Keybind to Hide/Show UI (Right Shift)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
         MainFrame.Visible = not MainFrame.Visible
     end
 end)
 
--- AUTO-DETECT STATE AFTER TELEPORT
 if getgenv().autoFarm then
     SetToggleState(true)
 end
