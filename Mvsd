@@ -1,4 +1,4 @@
--- [[ Sparx - Smart Context-Aware Auto Farm & Auto Kill ]]
+-- [[ Sparx - Ultimate Delayed-Start Auto Farm & Burst Kill ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,7 +8,6 @@ local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
-local MapName = game:GetService("MarketplaceService")
 
 local SCRIPT_RAW_URL = "https://raw.githubusercontent.com/sparxtools/Mvsd/refs/heads/main/Mvsd" 
 
@@ -37,45 +36,31 @@ local autoShootConnection = nil
 local lastFireTime = 0
 local lastEquipTime = 0
 local lastQueueTime = 0
-local FIRE_RATE_COOLDOWN = 0.11
-local EQUIP_COOLDOWN = 0.4 
-local QUEUE_COOLDOWN = 5.0 
+local matchStartTime = 0
+local wasInMatch = false
 
--- Smart Environment Detector: Returns true if we are in the Lobby, false if we are inside a Match
-local function IsInLobby()
-    -- Check if global matchmaking frame/ui or specific lobby markers exist in Workspace/PlayerGui
+local FIRE_RATE_COOLDOWN = 0.05
+local EQUIP_COOLDOWN = 0.4 
+local QUEUE_COOLDOWN = 6.0 
+local MATCH_LOAD_DELAY = 5.0 -- 5 seconds wait time for map/players to load in 1v1
+
+-- Accurate Match Detector
+local function IsInMatch()
     local localPlayer = Players.LocalPlayer
-    local playerGui = localPlayer and localPlayer:FindFirstChild("PlayerGui")
+    if not localPlayer or not localPlayer.Character then return false end
     
-    -- If a match is active, usually team structures or match UI exist, or we check workspace contents
-    -- Adjust this check based on MVSD lobby characteristics (e.g., presence of matchmaking prompts)
-    local matchmakingFolder = ReplicatedStorage:FindFirstChild("GlobalMatchmaking")
-    
-    -- Example heuristic: If there are fewer than 2 characters alive or we are in a safe zone, we are likely in lobby
-    -- Alternatively, check if the "Play" or matchmaking UI is visible on screen
-    if playerGui then
-        for _, gui in pairs(playerGui:GetChildren()) do
-            if gui:IsA("ScreenGui") and (gui.Name:lower():find("menu") or gui.Name:lower():find("lobby") or gui.Name:lower():find("shop")) then
-                -- Check if a match hud is NOT active
-                return true
+    local enemyFound = false
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character then
+            local root = player.Character:FindFirstChild("HumanoidRootPart")
+            local hum = player.Character:FindFirstChildOfClass("Humanoid")
+            if root and hum and hum.Health > 0 then
+                enemyFound = true
+                break
             end
         end
     end
-    
-    -- Fallback check: if we have opponents outside our team spawned in workspace combat arena
-    local enemyCount = 0
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            enemyCount = enemyCount + 1
-        end
-    end
-    
-    -- If no enemies are around or we are in the main place container, consider it lobby
-    if enemyCount == 0 then
-        return true
-    end
-    
-    return false
+    return enemyFound
 end
 
 -- Robust Target Finder
@@ -123,7 +108,7 @@ local function JoinMatchmaking()
         
         if joinQueue then
             ArmTeleportQueue()
-            print("[Sparx AutoFarm]: In Lobby -> Triggering Solo Matchmaking Queue...")
+            print("[Sparx AutoFarm]: In Lobby -> Requesting Solo Match Queue...")
             joinQueue:InvokeServer("Solo")
         end
     end)
@@ -133,7 +118,7 @@ local function ForceEquipWeapon(myChar)
     if not myChar then return end
     pcall(function()
         if not myChar:FindFirstChildOfClass("Tool") and not myChar:FindFirstChild("Gun_Equip") then
-            print("[Sparx Combat]: Equipping weapon tool...");
+            print("[Sparx Combat]: Forcing weapon equip...")
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
             task.wait(0.05)
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
@@ -141,7 +126,7 @@ local function ForceEquipWeapon(myChar)
     end)
 end
 
--- Smart Context-Aware Loop
+-- Ultimate Combat Loop with 5-Second Match Load Buffer & 5x Burst Fire
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
@@ -150,9 +135,17 @@ local function StartCombatLoop()
         if not LocalPlayer then return end
 
         if getgenv().autoFarm then
-            -- CHECK ENVIRONMENT: Are we in the Lobby or in a Match?
-            if IsInLobby() then
-                -- LOBBY LOGIC: Only handle matchmaking queue. Do NOT shoot or look for targets here.
+            local inMatchNow = IsInMatch()
+            
+            -- Detect transition into a match to start load timer buffer
+            if inMatchNow and not wasInMatch then
+                matchStartTime = os.clock()
+                print("[Sparx System]: Entered 1v1 match! Buffering 5 seconds for loading...")
+            end
+            wasInMatch = inMatchNow
+
+            if not inMatchNow then
+                -- LOBBY STATE: Queue for match
                 local currentTime = os.clock()
                 if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
                     lastQueueTime = currentTime
@@ -160,7 +153,11 @@ local function StartCombatLoop()
                     task.spawn(JoinMatchmaking)
                 end
             else
-                -- MATCH LOGIC: We are inside the 1v1 match! Execute Auto-Equip and Auto-Kill.
+                -- MATCH STATE: Check if 5-second load buffer has passed
+                if (os.clock() - matchStartTime) < MATCH_LOAD_DELAY then
+                    return -- Wait out loading screen/buffer safely
+                end
+
                 local myChar = LocalPlayer.Character
                 if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
                 
@@ -186,15 +183,17 @@ local function StartCombatLoop()
                 local targetInstance, predictedPosition = getNearestTarget()
                 if targetInstance and predictedPosition then
                     lastFireTime = currentTime 
-                    local success, err = pcall(function()
-                        ShootRemote:FireServer(muzzle.WorldPosition, predictedPosition, targetInstance, predictedPosition)
-                    end)
                     
-                    if success then
-                        print("[Sparx KillLog]: Successfully eliminated target in match!")
-                    else
-                        warn("[Sparx Combat Error]: " .. tostring(err))
-                    end
+                    -- BURST FIRE: Send 5 packets instantly to guarantee hit registration
+                    task.spawn(function()
+                        for i = 1, 5 do
+                            pcall(function()
+                                ShootRemote:FireServer(muzzle.WorldPosition, predictedPosition, targetInstance, predictedPosition)
+                            end)
+                            task.wait(0.02)
+                        end
+                    end)
+                    print("[Sparx KillLog]: Fired 5x burst packet at match target!")
                 end
             end
         end
@@ -271,7 +270,7 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "SMART AUTO FARM"
+Subtitle.Text = "BUFFERED AUTO FARM"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
@@ -367,7 +366,7 @@ local function SetToggleState(enabled)
     getgenv().autoShoot = enabled
     
     if enabled then
-        print("[Sparx System]: Smart Auto Farm Enabled.")
+        print("[Sparx System]: Buffered Auto Farm Enabled.")
         StartCombatLoop()
         ArmTeleportQueue()
         
@@ -379,7 +378,7 @@ local function SetToggleState(enabled)
         Dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
         ToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     else
-        print("[Sparx System]: Smart Auto Farm Disabled.")
+        print("[Sparx System]: Buffered Auto Farm Disabled.")
         if autoShootConnection then autoShootConnection:Disconnect() end
         if queue_on_teleport then queue_on_teleport("") end
         
