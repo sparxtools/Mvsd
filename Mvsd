@@ -1,4 +1,4 @@
--- [[ Sparx - Auto Farm & Infinite Teleport Persistence Loop ]]
+-- [[ Sparx - Permanent Infinite Auto-Kill & Auto-Farm Loop ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,7 +13,6 @@ local SCRIPT_RAW_URL = "https://raw.githubusercontent.com/sparxtools/Mvsd/refs/h
 
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 
--- Function to continuously re-arm the teleport queue so it never dies
 local function SaveTeleportState(state)
     if queue_on_teleport then
         if state then
@@ -30,7 +29,6 @@ local function SaveTeleportState(state)
     end
 end
 
--- Re-arm queue whenever a teleport begins so it chains infinitely
 if queue_on_teleport then
     TeleportService.TeleportInitFailed:Connect(function()
         if getgenv().autoFarm then
@@ -55,6 +53,7 @@ local FIRE_RATE_COOLDOWN = 0.11
 local EQUIP_COOLDOWN = 0.5 
 local QUEUE_COOLDOWN = 4.0 
 
+-- Robust Target Finder (Re-evaluates every frame to never lose targets)
 local function getNearestTarget()
     local LocalPlayer = Players.LocalPlayer
     if not LocalPlayer then return nil, nil end
@@ -98,7 +97,6 @@ local function JoinMatchmaking()
         local joinQueue = remotes and remotes:FindFirstChild("JoinQueue")
         
         if joinQueue then
-            -- Re-arm queue state right before invoking match join
             if getgenv().autoFarm then
                 SaveTeleportState(true)
             end
@@ -107,13 +105,15 @@ local function JoinMatchmaking()
     end)
 end
 
+-- Permanent Robust Combat Loop (Handles tool re-equipping on death/respawn)
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
     autoShootConnection = RunService.Heartbeat:Connect(function()
         local LocalPlayer = Players.LocalPlayer
-        if not LocalPlayer or not LocalPlayer.Character then return end
+        if not LocalPlayer then return end
 
+        -- Handle Matchmaking Queue when in lobby/idle
         if getgenv().autoFarm then
             local currentTime = os.clock()
             if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
@@ -122,8 +122,16 @@ local function StartCombatLoop()
             end
         end
         
+        -- Continuous Auto Kill & Dynamic Tool Re-Equip
         if getgenv().autoShoot or getgenv().autoFarm then
-            if not LocalPlayer.Character:FindFirstChildOfClass("Tool") then
+            local myChar = LocalPlayer.Character
+            if not myChar or not myChar:FindFirstChild("HumanoidRootPart") then return end
+            
+            local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then return end
+
+            -- Auto-Equip if weapon is missing or dropped after death/respawn
+            if not myChar:FindFirstChildOfClass("Tool") and not myChar:FindFirstChild("Gun_Equip") then
                 local currentTime = os.clock()
                 if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
                     lastEquipTime = currentTime
@@ -142,7 +150,7 @@ local function StartCombatLoop()
             local ShootRemote = remotesFolder and remotesFolder:FindFirstChild("ShootGun")
             if not ShootRemote then return end
             
-            local gunModel = LocalPlayer.Character:FindFirstChild("Gun_Equip") or LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            local gunModel = myChar:FindFirstChild("Gun_Equip") or myChar:FindFirstChildOfClass("Tool")
             local muzzle = gunModel and gunModel:FindFirstChild("Muzzle", true)
             if not muzzle then return end
             
@@ -157,10 +165,12 @@ local function StartCombatLoop()
     end)
 end
 
+-- UI Cleanup
 if CoreGui:FindFirstChild("SparxAutoFarmUI") then
     CoreGui.SparxAutoFarmUI:Destroy()
 end
 
+-- UI Construction
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "SparxAutoFarmUI"
 ScreenGui.Parent = CoreGui
@@ -219,7 +229,7 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "AUTO FARM LOOP"
+Subtitle.Text = "AUTO FARM INFINITE"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
