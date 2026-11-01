@@ -1,4 +1,4 @@
--- [[ Sparx - Ultimate Delayed-Start Auto Farm & Burst Kill ]]
+-- [[ Sparx - Ultimate 2-Player Match State Auto Farm ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -42,25 +42,16 @@ local wasInMatch = false
 local FIRE_RATE_COOLDOWN = 0.05
 local EQUIP_COOLDOWN = 0.4 
 local QUEUE_COOLDOWN = 6.0 
-local MATCH_LOAD_DELAY = 5.0 -- 5 seconds wait time for map/players to load in 1v1
+local MATCH_LOAD_DELAY = 5.0 
 
--- Accurate Match Detector
+-- Exact 1v1 Match Detector: 1v1 servers strictly contain exactly 2 players total.
 local function IsInMatch()
-    local localPlayer = Players.LocalPlayer
-    if not localPlayer or not localPlayer.Character then return false end
-    
-    local enemyFound = false
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= localPlayer and player.Character then
-            local root = player.Character:FindFirstChild("HumanoidRootPart")
-            local hum = player.Character:FindFirstChildOfClass("Humanoid")
-            if root and hum and hum.Health > 0 then
-                enemyFound = true
-                break
-            end
-        end
+    local allPlayers = Players:GetPlayers()
+    -- Exactly 2 players means we are in the solo 1v1 match server
+    if #allPlayers == 2 then
+        return true
     end
-    return enemyFound
+    return false
 end
 
 -- Robust Target Finder
@@ -108,7 +99,7 @@ local function JoinMatchmaking()
         
         if joinQueue then
             ArmTeleportQueue()
-            print("[Sparx AutoFarm]: In Lobby -> Requesting Solo Match Queue...")
+            print("[Sparx AutoFarm]: In Lobby (Crowded Server) -> Requesting Solo Match Queue...")
             joinQueue:InvokeServer("Solo")
         end
     end)
@@ -126,7 +117,7 @@ local function ForceEquipWeapon(myChar)
     end)
 end
 
--- Ultimate Combat Loop with 5-Second Match Load Buffer & 5x Burst Fire
+-- Ultimate Combat Loop with 2-Player Server Check & 5x Burst Fire
 local function StartCombatLoop()
     if autoShootConnection then autoShootConnection:Disconnect() end
     
@@ -137,15 +128,14 @@ local function StartCombatLoop()
         if getgenv().autoFarm then
             local inMatchNow = IsInMatch()
             
-            -- Detect transition into a match to start load timer buffer
             if inMatchNow and not wasInMatch then
                 matchStartTime = os.clock()
-                print("[Sparx System]: Entered 1v1 match! Buffering 5 seconds for loading...")
+                print("[Sparx System]: Entered 1v1 match server (2 players detected)! Buffering 5 seconds...")
             end
             wasInMatch = inMatchNow
 
             if not inMatchNow then
-                -- LOBBY STATE: Queue for match
+                -- LOBBY STATE (Crowded server): Only run matchmaking queue
                 local currentTime = os.clock()
                 if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
                     lastQueueTime = currentTime
@@ -153,9 +143,9 @@ local function StartCombatLoop()
                     task.spawn(JoinMatchmaking)
                 end
             else
-                -- MATCH STATE: Check if 5-second load buffer has passed
+                -- MATCH STATE (Exact 1v1 server): Wait out load delay, then auto-kill
                 if (os.clock() - matchStartTime) < MATCH_LOAD_DELAY then
-                    return -- Wait out loading screen/buffer safely
+                    return 
                 end
 
                 local myChar = LocalPlayer.Character
@@ -184,7 +174,7 @@ local function StartCombatLoop()
                 if targetInstance and predictedPosition then
                     lastFireTime = currentTime 
                     
-                    -- BURST FIRE: Send 5 packets instantly to guarantee hit registration
+                    -- BURST FIRE: Send 5 packets instantly
                     task.spawn(function()
                         for i = 1, 5 do
                             pcall(function()
@@ -193,7 +183,7 @@ local function StartCombatLoop()
                             task.wait(0.02)
                         end
                     end)
-                    print("[Sparx KillLog]: Fired 5x burst packet at match target!")
+                    print("[Sparx KillLog]: Fired 5x burst packet at 1v1 opponent!")
                 end
             end
         end
@@ -270,7 +260,7 @@ Subtitle.BackgroundTransparency = 1
 Subtitle.Position = UDim2.new(0, 0, 0, 26)
 Subtitle.Size = UDim2.new(1, 0, 0, 15)
 Subtitle.Font = Enum.Font.Gotham
-Subtitle.Text = "BUFFERED AUTO FARM"
+Subtitle.Text = "1V1 SERVER DETECTOR"
 Subtitle.TextColor3 = Color3.fromRGB(150, 190, 255)
 Subtitle.TextSize = 8
 
@@ -366,7 +356,7 @@ local function SetToggleState(enabled)
     getgenv().autoShoot = enabled
     
     if enabled then
-        print("[Sparx System]: Buffered Auto Farm Enabled.")
+        print("[Sparx System]: 1v1 Server Detector Auto Farm Enabled.")
         StartCombatLoop()
         ArmTeleportQueue()
         
@@ -378,7 +368,7 @@ local function SetToggleState(enabled)
         Dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
         ToggleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     else
-        print("[Sparx System]: Buffered Auto Farm Disabled.")
+        print("[Sparx System]: Auto Farm Disabled.")
         if autoShootConnection then autoShootConnection:Disconnect() end
         if queue_on_teleport then queue_on_teleport("") end
         
