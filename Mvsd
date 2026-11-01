@@ -1,11 +1,12 @@
--- [[ Sparx x Moneyhub - Fixed Auto Farm ]]
+-- [[ Sparx - Rayfield MVSD Ultimate Infinite Auto Farm ]]
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local TeleportService = game:GetService("TeleportService")
 
--- PASTE YOUR RAW SCRIPT URL HERE FOR TELEPORT PERSISTENCE
+-- ⚠️ PASTE YOUR RAW GITHUB URL HERE ⚠️
 local SCRIPT_RAW_URL = "https://raw.githubusercontent.com/sparxtools/Mvsd/refs/heads/main/Mvsd"
 
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
@@ -41,10 +42,13 @@ local EQUIP_COOLDOWN = 0.3
 local QUEUE_COOLDOWN = 6.0 
 local MATCH_LOAD_DELAY = 4.0 
 
--- Exact 1v1 Server Detector: 2 players means in-match server
+-- Exact 1v1 Server Detector: 2 players means we are in the solo match server.
 local function IsInMatch()
     local allPlayers = Players:GetPlayers()
-    return #allPlayers == 2
+    if #allPlayers == 2 then
+        return true
+    end
+    return false
 end
 
 local function getNearestTarget()
@@ -82,12 +86,12 @@ local function getNearestTarget()
     return nil, nil
 end
 
+-- Shared Core Structure for Multi-Round Safe Connection Management
 getgenv().MoneyhubSharedCore = {
     getNearestTarget = getNearestTarget,
     getConn = function() return autoShootConnection end,
     setConn = function(v) autoShootConnection = v end
 }
-
 local Shared = getgenv().MoneyhubSharedCore
 
 local function JoinMatchmaking()
@@ -105,7 +109,10 @@ end
 
 local function StartAutoShoot()
     local currentConn = Shared.getConn()
-    if currentConn then currentConn:Disconnect() end
+    if currentConn then 
+        currentConn:Disconnect() 
+        Shared.setConn(nil)
+    end
     
     local newConn = RunService.Heartbeat:Connect(function()
         local LocalPlayer = Players.LocalPlayer
@@ -120,7 +127,7 @@ local function StartAutoShoot()
             wasInMatch = inMatchNow
 
             if not inMatchNow then
-                -- LOBBY STATE: Re-queue & save state across rounds
+                -- LOBBY STATE: Queue for match & maintain persistence
                 local currentTime = os.clock()
                 if (currentTime - lastQueueTime) >= QUEUE_COOLDOWN then
                     lastQueueTime = currentTime
@@ -128,7 +135,7 @@ local function StartAutoShoot()
                     task.spawn(JoinMatchmaking)
                 end
             else
-                -- MATCH STATE: Respect loading delay
+                -- MATCH STATE: Check loading buffer
                 if (os.clock() - matchStartTime) < MATCH_LOAD_DELAY then
                     return 
                 end
@@ -141,7 +148,7 @@ local function StartAutoShoot()
 
                 local currentTime = os.clock()
                 
-                -- Auto Equip
+                -- Auto Equip Check
                 local hasTool = myChar:FindFirstChildOfClass("Tool") or myChar:FindFirstChild("Gun_Equip")
                 if not hasTool and getgenv().autoEquip then
                     if (currentTime - lastEquipTime) >= EQUIP_COOLDOWN then
@@ -170,7 +177,7 @@ local function StartAutoShoot()
                 if targetInstance and predictedPosition then
                     lastFireTime = currentTime 
                     
-                    -- Sparx 5x Burst Fire Logic
+                    -- Instant 5x Burst Fire
                     task.spawn(function()
                         for i = 1, 5 do
                             pcall(function()
@@ -208,8 +215,8 @@ tab:CreateToggle({
             StartAutoShoot() 
             ArmTeleportQueue()
         elseif not getgenv().autoEquip then
-            local c = Shared.getConn() 
-            if c then c:Disconnect() end 
+            local c = Shared.getConn()
+            if c then c:Disconnect() Shared.setConn(nil) end 
         end
     end
 })
@@ -224,12 +231,11 @@ tab:CreateToggle({
             ArmTeleportQueue()
         elseif not getgenv().autoShoot then
             local c = Shared.getConn()
-            if c then c:Disconnect() end
+            if c then c:Disconnect() Shared.setConn(nil) end
         end
     end
 })
 
--- Auto Start if enabled on teleport
 if getgenv().autoShoot or getgenv().autoEquip then
     StartAutoShoot()
 end
